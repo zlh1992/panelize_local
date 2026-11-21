@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -65,9 +64,14 @@ def call(target, q, a, work):
         if json.loads(auth.read_text()).get('auth_mode') != 'chatgpt':
             raise ValueError('所选凭据未标记为 ChatGPT 订阅登录')
         config = dict(model=a.codex_model, effort=a.effort, auth_file=str(auth), runtime_dir=str(ROOT/'codex'))
+        meta = {'route':'Codex CLI / ChatGPT login','effort':a.effort,'mode':a.codex_mode}
+        if a.codex_mode == 'agent':
+            answer, tools = codex_worker.run_agent(config, q, work, a.timeout)
+            meta['tools'] = tools
+            return answer, meta
         answer = work/'codex-answer'
         codex_worker.run(config, q, answer, timeout=a.timeout)
-        return answer.read_text(), {'route':'Codex CLI / ChatGPT login','effort':a.effort}
+        return answer.read_text(), meta
     if target == 'minimax':
         route = os.environ.get('PANELIZE_MINIMAX_URL','https://api.minimaxi.com/anthropic').rstrip('/')
         if route not in {'https://api.minimaxi.com/anthropic','https://api.minimax.io/anthropic'}:
@@ -142,6 +146,34 @@ def execute(target, q, a, folder):
     return result
 
 
+def write_report(folder, query, rows):
+    cards = []
+    pending = False
+    for target, row in rows.items():
+        if row is None:
+            pending = True
+            status, content = '运行中', ''
+        else:
+            fields = [row['requested_model'] or 'Web', row.get('mode'), row['status'], f"{row['seconds']}s"]
+            status = ' · '.join(field for field in fields if field)
+            tools = row.get('tools', [])
+            if tools:
+                status += ' · ' + '、'.join(dict.fromkeys(tool['tool'] for tool in tools))
+            content = (folder/row['answer']).read_text() if row['status']=='completed' else row['error']
+        cards.append(f'<article><h2>{html.escape(target)}</h2><small>{html.escape(status)}</small>'
+                     f'<pre>{html.escape(content)}</pre></article>')
+    refresh = '<meta http-equiv="refresh" content="5">' if pending else ''
+    page = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            + refresh + '<title>回答对比</title><style>body{font:16px system-ui;margin:2rem}'
+            'main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:1rem}'
+            'article{padding:1rem;border:1px solid #ccc}pre{white-space:pre-wrap;overflow-wrap:anywhere}'
+            '</style><h1>回答对比</h1><pre>'+html.escape(query)+'</pre><main>'+''.join(cards)+'</main></html>')
+    staging = folder/'index.html.tmp'
+    staging.write_text(page)
+    staging.replace(folder/'index.html')
+
+
 def main():
     os.umask(0o077)
     p = argparse.ArgumentParser(description=__doc__)
@@ -150,6 +182,7 @@ def main():
     q.add_argument('--query-file',type=Path)
     p.add_argument('--targets',default=','.join(TARGETS))
     p.add_argument('--codex-model',default='gpt-6.2-sol')
+    p.add_argument('--codex-mode',choices=('agent','text'),default='agent')
     p.add_argument('--effort',choices=['low','medium','high','xhigh'],default='high')
     p.add_argument('--codex-auth',default='~/.codex/auth.json')
     p.add_argument('--minimax-model',default='MiniMax-M3')
@@ -165,19 +198,19 @@ def main():
     folder = a.out.resolve()/(dt.datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8])
     folder.mkdir(parents=True)
     (folder/'query.md').write_text(query)
+    rows = dict.fromkeys(targets)
+    write_report(folder,query,rows)
     print(folder,flush=True)
+    print('对比页',folder/'index.html',flush=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(targets)) as pool:
         jobs = [pool.submit(execute,t,query,a,folder) for t in targets]
         for job in concurrent.futures.as_completed(jobs):
             row = job.result()
+            rows[row['target']] = row
+            write_report(folder,query,rows)
             print(row['target'],row['status'],row.get('error','')[:250],flush=True)
     results = [job.result() for job in jobs]
     (folder/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2))
-    cards = []
-    for r in results:
-        content = (folder/r['answer']).read_text() if r['status']=='completed' else r['error']
-        cards.append('<article><h2>'+r['target']+'</h2><small>'+html.escape(str(r['requested_model'] or 'Web')+' · '+r['status']+' · '+str(r['seconds'])+'s')+'</small><pre>'+html.escape(content)+'</pre></article>')
-    (folder/'index.html').write_text('<!doctype html><meta charset=utf-8><title>回答对比</title><style>body{font:16px system-ui;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}article{padding:1rem;border:1px solid #ccc}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>回答对比</h1><pre>'+html.escape(query)+'</pre><main>'+''.join(cards)+'</main>')
     return int(any(r['status']!='completed' for r in results))
 
 if __name__ == '__main__':

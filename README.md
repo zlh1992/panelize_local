@@ -1,6 +1,6 @@
 # panelize_local
 
-在终端用同一份中文或英文问题并行调用四个助手，得到每一路的最终文本、耗时、状态和本地对比页。第一版面向文本问答和材料分析。各助手保留自己的系统提示、网页能力与工具策略，结果用于比较实际使用体验。
+在终端用同一份中文或英文问题并行调用四个助手，得到每一路的最终文本、耗时、状态和本地对比页。默认用 Codex agent 调研，其他通道各自保留网页能力与工具策略。
 
 ```bash
 ./compare.sh --query '用三句话说明自由现金流与净利润的区别'
@@ -15,13 +15,13 @@ printf '%s\n' '请列出材料中的三个假设。' | ./compare.sh --targets co
 | doubao | 当前安装本地扩展的 Chrome profile，打开豆包新会话 | 本轮用户文本匹配，随后有回复正文，观察到复制操作或已结束的生成状态，正文稳定，保存会话 URL |
 | deepseek | 官方 DeepSeek Harness headless，deepseek-official，deepseek-flash | 进程正常退出并收到完成原因标记为 completed 的 final 事件和非空文本 |
 
-每次在当前目录的 `runs/<时间>-<随机编号>/` 生成 `query.md`、各目标的 JSON、成功目标的 Markdown、`results.json` 和 `index.html`。终端先打印目录，随后逐路报告状态。全部成功退出 0，部分失败退出 1，已成功的答案可继续查看。按目标重新运行会创建新目录。模型参数表示请求的配置，网页未披露的底层模型记为未知。
+每次在当前目录的 `runs/<时间>-<随机编号>/` 生成 `query.md`、各目标的 JSON、成功目标的 Markdown、`results.json` 和 `index.html`。启动时就打印目录和 `index.html` 的绝对路径。可以立即打开对比页，运行期间每 5 秒刷新，完成一路就展示一路。全部成功退出 0，部分失败退出 1。按目标重新运行会创建新目录。模型参数表示请求的配置，网页未披露的底层模型记为未知。
 
 ## 第一次配置
 
 支持 macOS、Python 3.9+、Bash 和 Google Chrome。本机已验证 macOS；Linux 提供了 Chrome Native Messaging 注册路径，尚未实机验证。DSH 需要 Node.js >=24.9 和 npm。CLI 依赖按需安装，只运行部分目标时只配置对应凭据。
 
-1. **Codex**：使用支持本项目选项的 Codex CLI，并用 ChatGPT 订阅登录。项目优先使用终端 PATH 中的 `codex`。macOS 终端找不到命令时，会自动检查 `/Applications` 和 `~/Applications` 下的 ChatGPT 或 Codex 应用包。若安装在自定义位置，可用 `PANELIZE_CODEX` 显式指定 CLI 可执行文件的绝对路径，该设置优先于自动查找。默认读取 `~/.codex/auth.json`，可以用 `--codex-auth <文件>` 指定。worker 使用私有加锁运行目录、只读沙箱和临时任务目录。Codex 通道用于纯文本比较，关闭联网搜索和自动注入的技能说明。比较最新行情时，可把时间范围和行情数据放在同一份 `--query-file` 中。网络需要代理时，可把本机可用的 HTTP 代理 URL 单独写到 `~/.config/panelize-local/codex-proxy`。也支持 HTTP_PROXY 和 HTTPS_PROXY。指定代理文件只影响 Codex 子进程。
+1. **Codex**：使用支持本项目选项的 Codex CLI，并用 ChatGPT 订阅登录。项目优先使用终端 PATH 中的 `codex`。macOS 终端找不到命令时，会自动检查 `/Applications` 和 `~/Applications` 下的 ChatGPT 或 Codex 应用包。若安装在自定义位置，可用 `PANELIZE_CODEX` 显式指定 CLI 可执行文件的绝对路径，该设置优先于自动查找。默认读取 `~/.codex/auth.json`，可以用 `--codex-auth <文件>` 指定。默认 `--codex-mode agent` 使用该 `auth.json` 所在的 Codex home 和配置，在临时目录以只读沙箱运行。开启实时网页搜索，接受命令、MCP 等工具事件，在 `codex.json` 记录工具名称和状态。工具可用性取决于 CLI 版本和本机配置。某个工具失败后，agent 可尝试其他方法并交付最终回答。提供其他文件名的凭据时，使用仅含该凭据的临时 Codex home。旧的纯文本实验可加 `--codex-mode text`，它使用单独的加锁运行目录并关闭工具。网络需要代理时，可把本机可用的 HTTP 代理 URL 单独写到 `~/.config/panelize-local/codex-proxy`。也支持 HTTP_PROXY 和 HTTPS_PROXY。指定代理文件只影响 Codex 子进程。
 2. **Claude Code + MiniMax**：安装支持 `--bare`、`--tools` 和 JSON 输出的 Claude Code。执行 `python3 scripts/configure.py minimax`，输入可用于 Claude Code 的 MiniMax 套餐密钥。也支持环境变量 `MINIMAX_API_KEY`。默认使用 `https://api.minimaxi.com/anthropic`，海外套餐可设 `PANELIZE_MINIMAX_URL=https://api.minimax.io/anthropic`。每次启动独立进程与临时配置目录。实际计费由密钥绑定的套餐决定。
 3. **DeepSeek**：运行 `bash scripts/install-dsh.sh`，安装固定版本 `@deepseek-ai/dsh@0.2.2-rc.5` 到 `~/.local/share/panelize-local/dsh`。运行 `python3 scripts/configure.py deepseek` 隐藏输入 API key，或设置 `DEEPSEEK_API_KEY`。如果已安装其他位置的 dsh，可用 `PANELIZE_DSH` 指定可执行文件。每次运行生成独立模型 patch、临时 DSH_HOME 和空工作目录，以只读模式调用官方 API。
 4. **豆包网页**：在想使用的 Chrome profile 登录豆包，运行 `python3 scripts/setup-chrome.py`。进入 `chrome://extensions`，打开开发者模式，点「加载已解压的扩展程序」，选本仓库 `extension/`。扩展只声明豆包站点权限，使用 Chrome Native Messaging 与本用户的 Unix socket 通信。点击扩展图标可重新连接，也会定时重连。一次只在一个 profile 加载。移动仓库后，重新注册并从新路径加载扩展。

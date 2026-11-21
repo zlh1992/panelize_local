@@ -10,11 +10,41 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'app'))
 import compare
+import codex_worker
 import codex_text_runtime
 import native_host
 
 
 class CompareTest(unittest.TestCase):
+    def test_agent_accepts_tool_items_then_requires_completed_turn(self):
+        events = [
+            {'type':'turn.started'},
+            {'type':'item.started','item':{'id':'w','type':'web_search'}},
+            {'type':'item.completed','item':{'id':'w','type':'web_search'}},
+            {'type':'item.completed','item':{'id':'s','type':'mcp_tool_call','tool':'search','status':'failed'}},
+            {'type':'item.completed','item':{'id':'x','type':'command_execution','status':'completed'}},
+            {'type':'item.completed','item':{'type':'agent_message','text':'answer'}},
+            {'type':'turn.completed'},
+        ]
+        self.assertEqual([x['tool'] for x in codex_worker.agent_tools(map(json.dumps,events))],
+                         ['web_search','search','command_execution'])
+        for last in ('turn.started', 'turn.failed', 'turn.cancelled'):
+            with self.assertRaises(RuntimeError):
+                codex_worker.agent_tools(map(json.dumps, events + [{'type':last}]))
+
+    def test_report_is_readable_while_another_target_is_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder/'codex.md').write_text('done')
+            row = dict(requested_model='gpt',status='completed',answer='codex.md',seconds=1)
+            compare.write_report(folder,'question',{'codex':row,'deepseek':None})
+            report = (folder/'index.html').read_text()
+            self.assertIn('运行中', report)
+            self.assertIn('done', report)
+            self.assertIn('http-equiv="refresh"', report)
+            compare.write_report(folder,'question',{'codex':row})
+            self.assertNotIn('http-equiv="refresh"', (folder/'index.html').read_text())
+
     def test_codex_discovery_with_and_without_terminal_path(self):
         bundle = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'
         with tempfile.TemporaryDirectory() as tmp:

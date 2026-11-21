@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a configured, text-only Codex worker with no ambient account fallback."""
+"""Codex agent and isolated text workers."""
 import argparse
 import json
 import os
@@ -44,6 +44,58 @@ def terminate(proc):
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait(timeout=5)
+
+
+def agent_tools(events):
+    """Count each tool item once even when the CLI reports several updates."""
+    tools = {}
+    terminal = None
+    for line in events:
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        kind = event.get('type')
+        if kind in ('turn.started', 'turn.completed', 'turn.failed', 'turn.aborted', 'turn.cancelled'):
+            terminal = kind
+        item = event.get('item') or {}
+        item_type = item.get('type', '')
+        if item_type in ('web_search', 'command_execution', 'file_change', 'image_view') or item_type.endswith('_tool_call'):
+            status = item.get('status') or kind
+            tools[item['id']] = {'type':item_type, 'tool':item.get('tool') or item_type, 'status':status}
+    if terminal != 'turn.completed':
+        raise RuntimeError(f'Codex 缺少成功完成的回执（{terminal}）')
+    return list(tools.values())
+
+
+def run_agent(cfg, prompt, work, timeout):
+    work = Path(work)
+    auth = Path(cfg['auth_file']).expanduser().absolute()
+    home = auth.parent
+    if auth.name != 'auth.json':
+        home = work / 'codex-home'
+        home.mkdir(mode=0o700)
+        runtime._atomic_private(home/'auth.json', auth.read_bytes())
+    answer = work / 'answer.txt'
+    args = [runtime.resolve_codex(), '-a', 'never', 'exec', '--ephemeral', '--skip-git-repo-check',
+            '-s', 'read-only', '-c', 'web_search="live"', '-c', 'model_provider="openai"',
+            '-c', 'model_reasoning_effort=' + json.dumps(cfg['effort']), '-m', cfg['model'],
+            '--json', '-o', str(answer), '-']
+    with (work/'events.jsonl').open('w+') as events, (work/'stderr').open('w') as err:
+        proc = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=events, stderr=err,
+                                env=runtime.clean_env(home), text=True, start_new_session=True)
+        try:
+            proc.communicate(prompt, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f'Codex agent 超过 {timeout} 秒')
+        finally:
+            terminate(proc)
+        if proc.returncode != 0:
+            raise RuntimeError(f'Codex agent 退出码 {proc.returncode}')
+        events.seek(0)
+        tools = agent_tools(events)
+    if not answer.is_file() or not answer.stat().st_size:
+        raise RuntimeError('Codex agent 未返回最终答案')
+    return answer.read_text(), tools
 
 
 def run(cfg, prompt, output, executable=None, timeout=600):
