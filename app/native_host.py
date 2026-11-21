@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import select
 import socket
 import struct
 import sys
@@ -15,9 +16,12 @@ LIMIT = 950_000
 
 
 def exact(stream, count):
-    data = stream.read(count)
-    if len(data) != count:
-        raise EOFError
+    data = bytearray()
+    while len(data) < count:
+        chunk = stream.read(count - len(data))
+        if not chunk:
+            raise EOFError
+        data.extend(chunk)
     return data
 
 
@@ -36,38 +40,57 @@ def send(stream, value):
     stream.flush()
 
 
+def handle_client(conn, chrome):
+    with conn, conn.makefile('rwb') as io:
+        conn.settimeout(10)
+        try:
+            job = receive(io)
+        except (EOFError, ValueError):
+            return
+        if not isinstance(job, dict):
+            return
+        if job.get('type') == 'ping':
+            send(io, {'ready': True})
+            return
+        if not isinstance(job.get('id'), str) or not isinstance(job.get('deadline'), (float, int)):
+            send(io, {'error': 'invalid job'})
+            return
+        deadline = job['deadline'] / 1000
+        if deadline <= time.time():
+            send(io, {'error': 'queued job expired'})
+            return
+        send(sys.stdout.buffer, job)
+        while select.select([chrome], [], [], max(0, deadline - time.time()))[0]:
+            result = receive(chrome)
+            if result.get('id') == job['id']:
+                send(io, result)
+                return
+        send(io, {'error': '豆包网页超时，请检查已打开的标签页'})
+
+
 def main():
-    import select
     os.umask(0o077)
     ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (ROOT/'host.lock').open('a') as lock, socket.socket(socket.AF_UNIX) as server:
+    # Unbuffered reads keep select() in sync with Chrome's native message frames.
+    with (ROOT/'host.lock').open('a') as lock, socket.socket(socket.AF_UNIX) as server, \
+            os.fdopen(sys.stdin.fileno(), 'rb', buffering=0, closefd=False) as chrome:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         SOCKET.unlink(missing_ok=True)
         server.bind(str(SOCKET))
         server.listen(8)
         try:
             while True:
-                ready, _, _ = select.select([server, sys.stdin.buffer], [], [])
-                if sys.stdin.buffer in ready:
-                    break
-                conn, _ = server.accept()
-                with conn, conn.makefile('rwb') as io:
-                    conn.settimeout(10)
+                ready, _, _ = select.select([server, chrome], [], [])
+                if chrome in ready:
+                    receive(chrome)  # Discard a late response to an expired request.
+                if server in ready:
+                    conn, _ = server.accept()
                     try:
-                        job = receive(io)
-                        if job.get('type') == 'ping':
-                            send(io, {'ready': True})
-                            continue
-                        if job['deadline'] <= time.time()*1000:
-                            send(io, {'error':'queued job expired'})
-                            continue
-                        send(sys.stdout.buffer, job)
-                        result = receive(sys.stdin.buffer)
-                        if result.get('id') != job['id']:
-                            raise ValueError('mismatched job id')
-                        send(io, result)
+                        handle_client(conn, chrome)
                     except (BrokenPipeError, ConnectionResetError, TimeoutError):
                         continue
+        except EOFError:
+            pass  # Chrome closed its port.
         finally:
             SOCKET.unlink(missing_ok=True)
 
