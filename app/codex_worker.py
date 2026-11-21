@@ -14,6 +14,11 @@ import codex_text_runtime as runtime
 
 # Matches activity, not benign flags such as `plugins=false`.
 PLUGIN_ACTIVITY = re.compile(r'(?i)(?:plugin[^\n]{0,100}(?:download|sync|fetch|install)|(?:download|sync|fetch|install)[^\n]{0,100}plugin)')
+TEXT_ONLY_INSTRUCTIONS = (
+    "Answer the user's question directly in text. This worker has no external data or tools. "
+    "Do not call tools, discover MCP resources, or invoke skills. "
+    "If current data is needed and the user did not supply it, say what cannot be verified."
+)
 
 
 def configuration(path):
@@ -57,6 +62,8 @@ def run(cfg, prompt, output, executable=None, timeout=600):
                     *runtime.DISABLE_ARGS, '--ephemeral', '--skip-git-repo-check',
                     '-s', 'read-only', '--disable', 'shell_tool', '--disable', 'apps',
                     '--disable', 'browser_use', '--disable', 'computer_use',
+                    '-c', 'skills.include_instructions=false',
+                    '-c', 'developer_instructions=' + json.dumps(TEXT_ONLY_INSTRUCTIONS),
                     '-c', 'web_search="disabled"', '--json', '-c', 'model_reasoning_effort='+json.dumps(cfg.get('effort','high')), '-m', cfg['model'],
                     '-o', str(result), '-']
             with (work/'prompt.txt').open('w+') as inp, (work/'stdout').open('w+') as stdout, (work/'stderr').open('w+') as stderr:
@@ -106,7 +113,7 @@ def run(cfg, prompt, output, executable=None, timeout=600):
                         if event.get('type') == 'turn.completed': completed = True
                         item = event.get('item') or {}
                         if item.get('type') not in (None, 'agent_message', 'reasoning', 'error'):
-                            raise RuntimeError('Unexpected tool event; answer rejected')
+                            raise RuntimeError(f"Unexpected Codex item {item['type']!r}; answer rejected")
                         if event.get('type') in ('turn.failed', 'error') or item.get('type') == 'error':
                             raise RuntimeError('Codex reported an error; answer rejected')
                     if not completed or not result.is_file() or not result.read_text().strip():
