@@ -18,7 +18,9 @@ extension = ''.join(chr(97+int(c,16)) for c in digest)
 directory = Path.home()/('Library/Application Support/Google/Chrome/NativeMessagingHosts' if sys.platform == 'darwin' else '.config/google-chrome/NativeMessagingHosts')
 directory.mkdir(parents=True, exist_ok=True)
 launcher = cfg/'native-host'
-launcher.write_text('#!/bin/sh\nexec '+shlex.quote(sys.executable)+' '+shlex.quote(str(root/'app/native_host.py'))+'\n')
+host = cfg/'native_host.py'
+host.write_bytes((root/'app/native_host.py').read_bytes())
+launcher.write_text('#!/bin/sh\nexec '+shlex.quote(sys.executable)+' '+shlex.quote(str(host))+'\n')
 launcher.chmod(0o700)
 (directory/'local.panelize.compare.json').write_text(json.dumps(dict(name='local.panelize.compare', description='Panelize Local', path=str(launcher), type='stdio', allowed_origins=['chrome-extension://'+extension+'/'])))
 print('Chrome → chrome://extensions → 开发者模式 → 加载已解压的扩展程序：',root/'extension')

@@ -21,10 +21,12 @@ function connect() {
   const channel = chrome.runtime.connectNative('local.panelize.compare');
   port = channel;
   channel.onDisconnect.addListener(() => {
-    void chrome.runtime.lastError;
+    const error = chrome.runtime.lastError?.message || '本地连接已关闭';
+    chrome.action.setTitle({title: 'Panelize Local · ' + error});
     if (port === channel) port = undefined;
   });
   channel.onMessage.addListener(async job => {
+    chrome.action.setTitle({title: 'Panelize Local · 已连接'});
     try {
       const result = await compare(job);
       channel.postMessage({id: job.id, ...result});
