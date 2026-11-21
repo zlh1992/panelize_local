@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Panelize Local · 豆包",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt8R5y7odoOwZZn6k5riLbLK4/h80aW8pqCCrP6ftN4/ZfOuV13aoUIOVExuDqqliZbAwS1QEIKToKil/EIaKhE9kd3nRRDLBCPKtqsog+0xgXJCEy18R/YEpYJQoDUrgJiSsbl55u3zlGnhXb8utkaYHYLk0/22ynt8zWLyXWIBDwaTSlPPmd8iummqMAdZP99CVc5xfAUzmvowAdnCoWjY0VtklMimfDBSpPfBjJUp/PNNrmUcS0RSXyClh12ZSTPmrQSRa1a5Af86jLIcJ0QR+nYd9XoYvkhSGIepZbbFf6r/YZdn1FdALAsJWjWPkQ6t+QBd81GXHVT0aTRU2nwIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://www.doubao.com/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "action": {
+    "default_title": "连接本地比较工具"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.doubao.com/*"
+      ],
+      "js": [
+        "vendor/button-finder-utils.js",
+        "vendor/doubao-input.js",
+        "doubao.js"
+      ]
+    }
+  ]
+}
