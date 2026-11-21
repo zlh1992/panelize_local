@@ -1,6 +1,7 @@
 import argparse
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -9,10 +10,29 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'app'))
 import compare
+import codex_text_runtime
 import native_host
 
 
 class CompareTest(unittest.TestCase):
+    def test_codex_discovery_with_and_without_terminal_path(self):
+        bundle = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = Path(tmp) / 'codex'
+            cli.touch(mode=0o700)
+            with patch.dict(os.environ, {'PATH':tmp, 'PANELIZE_CODEX':''}):
+                self.assertEqual(codex_text_runtime.resolve_codex(), str(cli))
+                os.environ['PATH'] = str(cli.parent / 'empty')
+                with patch.object(sys, 'platform', 'darwin'), \
+                        patch.object(Path, 'is_file', autospec=True, side_effect=lambda p: str(p) == bundle), \
+                        patch.object(os, 'access', return_value=True):
+                    self.assertEqual(codex_text_runtime.resolve_codex(), bundle)
+                os.environ['PANELIZE_CODEX'] = str(cli)
+                self.assertEqual(codex_text_runtime.resolve_codex(), str(cli))
+                os.environ['PANELIZE_CODEX'] = str(cli.parent / 'unavailable')
+                with self.assertRaisesRegex(RuntimeError, 'PANELIZE_CODEX'):
+                    codex_text_runtime.resolve_codex()
+
     def test_input_and_independent_failure(self):
         text = '第一行\n$(touch BAD) <script>one</script>'
         seen = {}

@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,6 +21,26 @@ CONFIG = '[features]\nplugins = false\nremote_plugin = false\nplugin_discovery_p
 DISABLE_ARGS = [arg for name in FEATURES for arg in ('--disable', name)]
 _CACHE = set()
 _CACHE_LOCK = threading.Lock()
+
+
+def resolve_codex():
+    override = os.environ.get('PANELIZE_CODEX')
+    if override:
+        path = Path(override).expanduser()
+        if path.is_absolute() and path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        raise RuntimeError('PANELIZE_CODEX 须为 Codex CLI 可执行文件的绝对路径')
+    on_path = shutil.which('codex')
+    if on_path:
+        return os.path.abspath(on_path)
+    if sys.platform == 'darwin':
+        for directory in (Path('/Applications'), Path.home() / 'Applications'):
+            for relative in ('ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+                             'Codex.app/Contents/Resources/codex'):
+                path = directory / relative
+                if path.is_file() and os.access(path, os.X_OK):
+                    return str(path)
+    raise RuntimeError('找不到 Codex CLI。请将 codex 加入 PATH，或设置 PANELIZE_CODEX 为可执行文件的绝对路径')
 
 
 def _directory(path):
@@ -43,8 +64,7 @@ def _atomic_private(path, data):
 
 
 def _preflight(home, executable=None):
-    executable = executable or shutil.which('codex')
-    if not executable: raise RuntimeError('Codex CLI unavailable')
+    executable = executable or resolve_codex()
     executable = str(Path(executable).resolve(strict=True)); stat = os.stat(executable)
     signature = (executable, stat.st_ino, stat.st_size, stat.st_mtime_ns, str(home), hashlib.sha256(CONFIG.encode()).hexdigest())
     with _CACHE_LOCK:

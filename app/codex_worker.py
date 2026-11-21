@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import tempfile
@@ -43,9 +42,7 @@ def terminate(proc):
 
 
 def run(cfg, prompt, output, executable=None, timeout=600):
-    executable = executable or shutil.which('codex')
-    if not executable:
-        raise RuntimeError('Codex CLI unavailable')
+    executable = executable or runtime.resolve_codex()
     if not prompt.strip():
         raise ValueError('Prompt must not be empty')
     output = Path(output).absolute()
